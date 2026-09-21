@@ -1,0 +1,34 @@
+root ::= ScreenplayResponse
+ScreenplayResponse ::= "{\n"
+  "  \"state_update\": " StateUpdate ",\n"
+  "  \"cues\": [\n" (AudioCue (",\n" AudioCue)*)? "\n  ]\n}"
+
+StateUpdate ::= "{\n"
+  "    \"location\": \"" [a-z0-9_]+ "\",\n"
+  "    \"active_characters\": [" (CharacterId (", " CharacterId)*)? "],\n"
+  "    \"acoustic_environment\": \"" ("room_small" | "hall_stone" | "forest_open" | "cave_wet" | "tavern_wood" | "dungeon" | "street_city") "\",\n"
+  "    \"current_bgm_track\": \"" [a-z0-9_]+ "\"\n"
+  "  }"
+
+CharacterId ::= "\"" [a-z0-9_]+ "\""
+
+AudioCue ::= "    {\n"
+  "      \"cue_id\": \"" [a-z0-9_]+ "\",\n"
+  "      \"type\": \"" ("dialogue" | "narration") "\",\n"
+  "      \"speaker_id\": \"" [a-z0-9_]+ "\",\n"
+  "      \"delivery\": {\n"
+  "        \"emotion\": \"" ("neutral" | "whisper" | "angry" | "nervous" | "sad" | "commanding" | "stoic" | "joyful" | "trembling") "\",\n"
+  "        \"speed\": " [0-1] "." [0-9] [0-9] ",\n"
+  "        \"pitch_shift\": " ("-" | "") [0-1] "." [0-9] [0-9] "\n"
+  "      },\n"
+  "      \"text\": " String ",\n"
+  "      \"sfx\": [" (SfxEvent (", " SfxEvent)*)? "]\n"
+  "    }"
+
+SfxEvent ::= "{\n"
+  "        \"timing\": \"" ("before_speech" | "simultaneous" | "after_speech") "\",\n"
+  "        \"prompt\": " String ",\n"
+  "        \"volume_db\": " ("-" [0-9]+ | [0-9]+) "\n"
+  "      }"
+
+String ::= "\"" ([^"\\] | "\\" ["\\/bfnrt])* "\""
