@@ -13,7 +13,8 @@ class BaseTTSEngine(ABC):
         voice: Optional[str] = None,
         speed: float = 1.0,
         pitch: float = 0.0,
-        volume: float = 1.0
+        volume: float = 1.0,
+        target_sample_rate: Optional[int] = None
     ) -> Path:
         """Syntetyzuje tekst do pliku audio WAV i zwraca ścieżkę do pliku."""
         pass

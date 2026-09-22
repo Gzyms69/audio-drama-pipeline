@@ -84,11 +84,14 @@ class PiperEngine(BaseTTSEngine):
         voice: Optional[str] = None,
         speed: float = 1.0,
         pitch: float = 0.0,
-        volume: float = 1.0
+        volume: float = 1.0,
+        target_sample_rate: Optional[int] = 44100
     ) -> Path:
         """
         Syntetyzuje podany tekst do pliku WAV za pomocą Piper TTS.
         Dla Pipera: mniejszy length_scale = szybsza mowa (length_scale = 1.0 / speed).
+        Jeśli podano target_sample_rate (domyślnie 44100 Hz), plik jest bezstratnie
+        resamplowany z natywnego 22050 Hz do studyjnego standardu 44.1 kHz.
         """
         out_p = Path(output_path)
         out_p.parent.mkdir(parents=True, exist_ok=True)
@@ -126,5 +129,14 @@ class PiperEngine(BaseTTSEngine):
         if proc.returncode != 0:
             err_msg = proc.stderr.decode("utf-8", errors="replace")
             raise RuntimeError(f"Błąd syntezy Piper TTS (kod {proc.returncode}): {err_msg}")
+
+        # Automatyczny resampling do target_sample_rate (np. 44100 Hz)
+        if target_sample_rate is not None and out_p.exists():
+            import soundfile as sf
+            from audio_drama.dsp.mixer import resample_audio
+            raw_audio, sr = sf.read(str(out_p))
+            if sr != target_sample_rate:
+                resampled = resample_audio(raw_audio, src_sr=sr, dst_sr=target_sample_rate)
+                sf.write(str(out_p), resampled, target_sample_rate)
 
         return out_p

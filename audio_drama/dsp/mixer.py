@@ -4,6 +4,23 @@ from pathlib import Path
 import soundfile as sf
 from pedalboard import Pedalboard, Limiter, HighpassFilter, Gain
 
+def resample_audio(audio: np.ndarray, src_sr: int, dst_sr: int) -> np.ndarray:
+    """
+    Wielofazowy resampling sygnału audio z zachowaniem fazy i wysokości tonu.
+    Eliminuje efekt chipmunka przy łączeniu sygnałów o różnych częstotliwościach próbkowania.
+    """
+    if src_sr == dst_sr or len(audio) == 0:
+        return audio.astype(np.float32)
+    from math import gcd
+    import scipy.signal
+    g = gcd(src_sr, dst_sr)
+    return scipy.signal.resample_poly(
+        audio,
+        up=dst_sr // g,
+        down=src_sr // g,
+        axis=0
+    ).astype(np.float32)
+
 class SceneMixer:
     def __init__(self, sample_rate: int = 44100):
         self.sample_rate = sample_rate
@@ -71,13 +88,18 @@ class SceneMixer:
         cues_audio: List[Dict[str, Any]]
     ) -> Tuple[np.ndarray, float]:
         """
-        Łączy kwestie głosowe sekwencyjnie z naturalnymi przerwami między wypowiedziami.
+        Łączy kwestie głosowe sekwencyjnie z naturalnymi przerwami między wypowiedziami,
+        automatycznie resamplując każdy fragment do self.sample_rate.
         """
         track_parts = []
         total_samples = 0
 
         for cue in cues_audio:
             audio = cue["audio"].astype(np.float32)
+            src_sr = cue.get("sample_rate", self.sample_rate)
+            if src_sr != self.sample_rate:
+                audio = resample_audio(audio, src_sr=src_sr, dst_sr=self.sample_rate)
+
             pause_ms = cue.get("pause_after_ms", 300)
             pause_samples = int(self.sample_rate * (pause_ms / 1000.0))
 

@@ -411,7 +411,15 @@ def run_pipeline(epub_file: str, db: str, chapter: Optional[int], scenes: Option
                 # Konwersja do mono float32
                 if audio_data.ndim > 1:
                     audio_data = np.mean(audio_data, axis=1)
-                cues_audio.append({"audio": audio_data, "pause_after_ms": 300})
+
+                cue.duration_ms = round((len(audio_data) / max(sr, 1)) * 1000.0, 1)
+                db_mgr.insert_cue(cue)
+
+                cues_audio.append({
+                    "audio": audio_data,
+                    "sample_rate": sr,
+                    "pause_after_ms": 300
+                })
 
             # Montaż ścieżki lektorskiej
             voice_track, voice_dur_s = mixer.assemble_voice_track(cues_audio)

@@ -48,3 +48,27 @@ def test_scene_mix_timeline():
     expected_duration = 0.5 + 0.2 + 0.5 + 0.2
     assert pytest.approx(duration_s, 0.05) == expected_duration
     assert len(mixed_voice) == round(duration_s * sr)
+
+def test_resampling_prevents_chipmunk_effect():
+    """
+    Test regresyjny: upewnia się, że sygnał 22050 Hz (z Piper TTS)
+    połączony w SceneMixerze (44100 Hz) zachowuje 100% czasu trwania
+    i nie zostaje 2x skompresowany czasowo (efekt chomika).
+    """
+    from audio_drama.dsp.mixer import resample_audio
+    mixer = SceneMixer(sample_rate=44100)
+    
+    # 1.0 sekunda głosu o częstotliwości 22050 Hz
+    voice_22k = np.sin(2 * np.pi * 200 * np.linspace(0, 1.0, 22050, endpoint=False)).astype(np.float32)
+    
+    # Bezpośredni test funkcji resample_audio
+    resampled_44k = resample_audio(voice_22k, src_sr=22050, dst_sr=44100)
+    assert len(resampled_44k) == 44100
+    
+    # Test w assemble_voice_track z podaniem sample_rate
+    cues = [
+        {"audio": voice_22k, "sample_rate": 22050, "pause_after_ms": 0}
+    ]
+    track, duration_s = mixer.assemble_voice_track(cues)
+    assert pytest.approx(duration_s, 0.01) == 1.0
+    assert len(track) == 44100
