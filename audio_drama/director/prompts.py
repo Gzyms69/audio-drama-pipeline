@@ -10,7 +10,7 @@ Zidentyfikuj wszystkich występujących bohaterów. Dla każdego określ:
 1. id (unikalny identyfikator małymi literami, np. geralt, jaskier, innkeeper)
 2. name (pełne imię / nazwa)
 3. aliases (inne formy, zaimki lub tytuły)
-4. voice_type ('f5_clone' dla postaci dialogowych, 'kokoro_narrator' dla lektora)
+4. voice_type ('piper' dla lektora i dialogów, 'f5_clone' dla zaawansowanego klonowania)
 5. pitch_offset (sugerowana modulacja wysokości tonu od -0.2 do +0.2)
 6. speed_factor (tempo mówienia od 0.8 do 1.2)
 
@@ -21,7 +21,7 @@ Zwróć odpowiedź WYŁĄCZNIE jako listę JSON obiektów postaci:
     "id": "narrator",
     "name": "Lektor Główny",
     "aliases": ["Narrator"],
-    "voice_type": "kokoro_narrator",
+    "voice_type": "piper",
     "pitch_offset": 0.0,
     "speed_factor": 1.0
   }},

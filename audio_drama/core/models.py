@@ -51,10 +51,13 @@ class ScreenplayResponse(BaseModel):
     cues: List[AudioCue]
 
 class Character(BaseModel):
-    id: str = Field(..., description="Identyfikator postaci (np. geralt)")
+    id: str = Field(..., description="Identyfikator postaci (np. geralt, keiko)")
     name: str = Field(..., description="Imię lub miano postaci")
     aliases: List[str] = Field(default_factory=list, description="Alternatywne formy zwracania się do postaci")
-    voice_type: Literal["f5_clone", "kokoro_narrator", "vox_polska"] = "f5_clone"
+    voice_type: str = Field(default="piper", description="Silnik głosu: piper, f5_clone, xtts")
+    voice_name: Optional[str] = Field(default=None, description="Identyfikator modelu głosu, np. pl_PL-darkman-medium")
+    gender: str = Field(default="unknown", description="Płeć postaci: female, male, unknown")
+    description: Optional[str] = Field(default=None, description="Profil psychofizyczny i cechy głosu")
     reference_wav_path: Optional[str] = None
     pitch_offset: float = 0.0
     speed_factor: float = 1.0

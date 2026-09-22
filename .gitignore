@@ -9,3 +9,7 @@ stems/
 output/
 grammar/*.gbnf
 !grammar/audio_screenplay.gbnf
+data/
+*.onnx
+*.onnx.json
+

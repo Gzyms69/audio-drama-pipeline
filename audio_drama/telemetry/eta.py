@@ -16,6 +16,10 @@ class EtaCalculator:
         else:
             self.ema_duration = self.alpha * duration_seconds + (1.0 - self.alpha) * self.ema_duration
 
+    def update(self, duration_seconds: float) -> None:
+        """Alias dla item_completed."""
+        self.item_completed(duration_seconds)
+
     def get_eta_seconds(self) -> float:
         remaining = max(self.total_items - self.completed_items, 0)
         if remaining == 0 or self.ema_duration is None:

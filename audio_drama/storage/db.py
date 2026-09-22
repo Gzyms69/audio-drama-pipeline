@@ -28,6 +28,9 @@ class DatabaseManager:
                 name TEXT NOT NULL,
                 aliases TEXT NOT NULL,
                 voice_type TEXT NOT NULL,
+                voice_name TEXT,
+                gender TEXT DEFAULT 'unknown',
+                description TEXT,
                 reference_wav_path TEXT,
                 pitch_offset REAL DEFAULT 0.0,
                 speed_factor REAL DEFAULT 1.0
@@ -65,6 +68,16 @@ class DatabaseManager:
             CREATE INDEX IF NOT EXISTS idx_cues_status ON audio_cues(status);
             CREATE INDEX IF NOT EXISTS idx_scenes_chapter ON scenes(chapter_idx, scene_idx);
             """)
+
+            # Bezpieczne migracje kolumn w characters
+            cursor.execute("PRAGMA table_info(characters)")
+            cols = [c[1] for c in cursor.fetchall()]
+            if "voice_name" not in cols:
+                cursor.execute("ALTER TABLE characters ADD COLUMN voice_name TEXT")
+            if "gender" not in cols:
+                cursor.execute("ALTER TABLE characters ADD COLUMN gender TEXT DEFAULT 'unknown'")
+            if "description" not in cols:
+                cursor.execute("ALTER TABLE characters ADD COLUMN description TEXT")
             conn.commit()
 
     def set_meta(self, key: str, value: str) -> None:
@@ -84,12 +97,15 @@ class DatabaseManager:
     def upsert_character(self, character: Character) -> None:
         with self.get_connection() as conn:
             conn.execute("""
-                INSERT INTO characters (id, name, aliases, voice_type, reference_wav_path, pitch_offset, speed_factor)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO characters (id, name, aliases, voice_type, voice_name, gender, description, reference_wav_path, pitch_offset, speed_factor)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name,
                     aliases = excluded.aliases,
                     voice_type = excluded.voice_type,
+                    voice_name = excluded.voice_name,
+                    gender = excluded.gender,
+                    description = excluded.description,
                     reference_wav_path = excluded.reference_wav_path,
                     pitch_offset = excluded.pitch_offset,
                     speed_factor = excluded.speed_factor
@@ -98,6 +114,9 @@ class DatabaseManager:
                 character.name,
                 json.dumps(character.aliases, ensure_ascii=False),
                 character.voice_type,
+                character.voice_name,
+                character.gender,
+                character.description,
                 character.reference_wav_path,
                 character.pitch_offset,
                 character.speed_factor
@@ -115,6 +134,9 @@ class DatabaseManager:
                 name=row["name"],
                 aliases=json.loads(row["aliases"]),
                 voice_type=row["voice_type"],
+                voice_name=row["voice_name"] if "voice_name" in row.keys() else None,
+                gender=row["gender"] if "gender" in row.keys() and row["gender"] else "unknown",
+                description=row["description"] if "description" in row.keys() else None,
                 reference_wav_path=row["reference_wav_path"],
                 pitch_offset=row["pitch_offset"],
                 speed_factor=row["speed_factor"]
@@ -130,6 +152,9 @@ class DatabaseManager:
                     name=row["name"],
                     aliases=json.loads(row["aliases"]),
                     voice_type=row["voice_type"],
+                    voice_name=row["voice_name"] if "voice_name" in row.keys() else None,
+                    gender=row["gender"] if "gender" in row.keys() and row["gender"] else "unknown",
+                    description=row["description"] if "description" in row.keys() else None,
                     reference_wav_path=row["reference_wav_path"],
                     pitch_offset=row["pitch_offset"],
                     speed_factor=row["speed_factor"]
