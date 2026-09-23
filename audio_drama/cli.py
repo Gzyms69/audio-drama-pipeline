@@ -20,8 +20,11 @@ from audio_drama.director.prompts import build_micro_screenplay_prompt
 from audio_drama.director.heuristic import parse_scene_heuristically
 from audio_drama.director.casting import CastBibleManager
 from audio_drama.tts.piper_engine import PiperEngine, PIPER_VOICE_CATALOG
+from audio_drama.tts.edge_engine import EdgeTTSEngine, EDGE_VOICE_CATALOG
 from audio_drama.tts.benchmark import TTSBenchmark
 from audio_drama.sfx.stable_audio import StableAudioEngine
+from audio_drama.sfx.library import FoleyLibrary
+from audio_drama.sfx.foley_matcher import FoleyMatcher
 from audio_drama.dsp.mixer import SceneMixer
 from audio_drama.telemetry.hardware import get_hardware_telemetry
 from audio_drama.telemetry.eta import EtaCalculator
@@ -247,8 +250,10 @@ def monitor_cmd(db: str):
 @click.option("--chapter", type=int, default=None, help="Przetwórz tylko wskazany numer rozdziału.")
 @click.option("--scenes", default=None, help="Zakres scen do przetworzenia, np. s_ch01_001..s_ch01_005.")
 @click.option("--director", "director_type", type=click.Choice(["ollama", "llama", "heuristic"]), default="ollama", help="Silnik reżysera.")
+@click.option("--tts", "tts_type", type=click.Choice(["edge", "piper"]), default="edge", help="Silnik syntezy mowy TTS (edge = naturalne głosy studyjne, piper = offline ONNX).")
+@click.option("--force", is_flag=True, default=False, help="Wymuś ponowną reżyserię i syntezę scen.")
 @click.option("--tmux", is_flag=True, default=False, help="Uruchom proces w tle w trwałej sesji tmux.")
-def run_pipeline(epub_file: str, db: str, chapter: Optional[int], scenes: Optional[str], director_type: str, tmux: bool):
+def run_pipeline(epub_file: str, db: str, chapter: Optional[int], scenes: Optional[str], director_type: str, tts_type: str, force: bool, tmux: bool):
     """Uruchamia pełny potok czasu rzeczywistego ze zintegrowanym dashboardem i odsłuchem per-scena."""
     if tmux and "TMUX" not in os.environ:
         session_name = "audio-drama"
@@ -257,7 +262,9 @@ def run_pipeline(epub_file: str, db: str, chapter: Optional[int], scenes: Option
             cmd += f" --chapter {chapter}"
         if scenes:
             cmd += f" --scenes {scenes}"
-        cmd += f" --director {director_type}"
+        cmd += f" --director {director_type} --tts {tts_type}"
+        if force:
+            cmd += " --force"
 
         click.echo(f"Uruchamianie w trwałej sesji tmux: {session_name}")
         subprocess.run(["tmux", "new-session", "-d", "-s", session_name, cmd], check=True)
@@ -308,12 +315,23 @@ def run_pipeline(epub_file: str, db: str, chapter: Optional[int], scenes: Option
     else:
         target_scenes = all_scenes
 
+    if force:
+        for s in target_scenes:
+            db_mgr.clear_cues_for_scene(s.scene_id)
+            s.status = "pending"
+            db_mgr.upsert_scene(s)
+
     pending_scenes = [s for s in target_scenes if s.status != "mixed"]
     logger.log("PIPELINE", f"Do przetworzenia: {len(pending_scenes)} scen (z {len(target_scenes)} w wybranym zakresie)")
 
     # Inicjalizacja silników
-    cast_mgr = CastBibleManager(db_mgr)
-    piper_tts = PiperEngine()
+    cast_mgr = CastBibleManager(db_mgr, engine_type=tts_type)
+    if tts_type == "edge":
+        tts_engine = EdgeTTSEngine()
+    else:
+        tts_engine = PiperEngine()
+    foley_lib = FoleyLibrary()
+    foley_matcher = FoleyMatcher(foley_lib)
     sfx_engine = StableAudioEngine()
     mixer = SceneMixer(sample_rate=44100)
 
@@ -341,7 +359,7 @@ def run_pipeline(epub_file: str, db: str, chapter: Optional[int], scenes: Option
 
             # FAZA 1: Reżyseria
             cues = db_mgr.get_cues_for_scene(scene.scene_id)
-            if not cues:
+            if not cues or force:
                 screenplay = None
                 if director_type == "ollama" and ollama_engine:
                     try:
@@ -373,6 +391,7 @@ def run_pipeline(epub_file: str, db: str, chapter: Optional[int], scenes: Option
                 if screenplay is None:
                     screenplay = parse_scene_heuristically(scene)
 
+                db_mgr.clear_cues_for_scene(scene.scene_id)
                 # Zapis cues do bazy
                 for cue in screenplay.cues:
                     cue.scene_id = scene.scene_id
@@ -385,22 +404,25 @@ def run_pipeline(epub_file: str, db: str, chapter: Optional[int], scenes: Option
                 db_mgr.upsert_scene(scene)
                 cues = db_mgr.get_cues_for_scene(scene.scene_id)
 
-            logger.log("TTS", f"Scena {scene.scene_id}: Synteza {len(cues)} kwestii (Piper ONNX)...")
+            logger.log("TTS", f"Scena {scene.scene_id}: Synteza {len(cues)} kwestii ({tts_type.upper()})...")
 
             # FAZA 2: Synteza Mowy
             cues_audio = []
             for cue in cues:
                 char = cast_mgr.resolve_character(cue.speaker_id)
-                voice_name = char.voice_name or "pl_PL-darkman-medium"
+                voice_name = char.voice_name
                 wav_path = stems_voices_dir / f"{cue.cue_id}.wav"
 
-                # Generowanie pliku WAV jeśli nie istnieje
-                if not wav_path.exists() or cue.status != "synthesized":
-                    piper_tts.synthesize(
+                # Generowanie pliku WAV jeśli nie istnieje lub wymuszono
+                if not wav_path.exists() or cue.status != "synthesized" or force:
+                    speed = char.speed_factor * cue.delivery.speed
+                    pitch = getattr(char, "pitch_offset", 0.0) * 50.0 + (cue.delivery.pitch_shift * 50.0)
+                    tts_engine.synthesize(
                         text=cue.text,
                         output_path=wav_path,
                         voice=voice_name,
-                        speed=char.speed_factor * cue.delivery.speed,
+                        speed=speed,
+                        pitch=pitch,
                         volume=1.0
                     )
                     cue.voice_wav_path = str(wav_path)
@@ -415,10 +437,11 @@ def run_pipeline(epub_file: str, db: str, chapter: Optional[int], scenes: Option
                 cue.duration_ms = round((len(audio_data) / max(sr, 1)) * 1000.0, 1)
                 db_mgr.insert_cue(cue)
 
+                pause_after = 180 if cue.cue_type == "dialogue" else 350
                 cues_audio.append({
                     "audio": audio_data,
                     "sample_rate": sr,
-                    "pause_after_ms": 300
+                    "pause_after_ms": pause_after
                 })
 
             # Montaż ścieżki lektorskiej
@@ -426,24 +449,28 @@ def run_pipeline(epub_file: str, db: str, chapter: Optional[int], scenes: Option
 
             # FAZA 3: Atmosfera / BGM
             logger.log("SFX", f"Scena {scene.scene_id}: Generacja tła audio...")
-            bgm_prompt = scene.bgm_prompt or "quiet convenience store room tone"
             bgm_file = stems_ambient_dir / f"{scene.scene_id}_bgm.wav"
-            sfx_engine.generate_ambient(
-                prompt=bgm_prompt,
-                duration_seconds=max(voice_dur_s, 5.0),
-                output_path=bgm_file,
-                volume=0.35
-            )
-            bgm_audio, _ = sf.read(str(bgm_file))
-            if bgm_audio.ndim > 1:
-                bgm_audio = np.mean(bgm_audio, axis=1)
+            if "konbini" in (scene.bgm_prompt or "").lower() or "sklep" in (scene.raw_text or "").lower():
+                bgm_audio = foley_lib.generate_store_ambience(duration_s=max(voice_dur_s, 5.0))
+                sf.write(str(bgm_file), bgm_audio, 44100)
+            else:
+                sfx_engine.generate_ambient(
+                    prompt=scene.bgm_prompt or "quiet convenience store room tone",
+                    duration_seconds=max(voice_dur_s, 5.0),
+                    output_path=bgm_file,
+                    volume=0.35
+                )
+                bgm_audio, _ = sf.read(str(bgm_file))
+                if bgm_audio.ndim > 1:
+                    bgm_audio = np.mean(bgm_audio, axis=1)
 
-            # FAZA 4: Miks i Mastering
-            logger.log("MIXER", f"Scena {scene.scene_id}: Mastering DSP i sidechain ducking...")
+            # FAZA 4: Miks i Mastering Foley
+            sfx_events = foley_matcher.match_scene_sfx(cues, cues_audio)
+            logger.log("MIXER", f"Scena {scene.scene_id}: Mastering DSP z {len(sfx_events)} efektami Foley...")
             out_scene_file = output_scenes_dir / f"{scene.scene_id}.wav"
             mixer.mix_and_master_scene(
                 voice_track=voice_track,
-                sfx_events=[],
+                sfx_events=sfx_events,
                 bgm_track=bgm_audio,
                 output_path=out_scene_file
             )

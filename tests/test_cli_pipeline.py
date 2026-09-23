@@ -21,11 +21,15 @@ def test_heuristic_parser():
         raw_text=sample_text
     )
     screenplay = parse_scene_heuristically(scene)
-    assert len(screenplay.cues) == 3
+    assert len(screenplay.cues) == 5
     assert screenplay.cues[0].cue_type == "narration"
     assert screenplay.cues[0].speaker_id == "narrator"
     assert screenplay.cues[1].cue_type == "dialogue"
-    assert screenplay.cues[2].cue_type == "dialogue"
+    assert screenplay.cues[1].speaker_id == "klient"
+    assert screenplay.cues[2].cue_type == "narration"
+    assert screenplay.cues[3].cue_type == "dialogue"
+    assert screenplay.cues[3].speaker_id == "keiko"
+    assert screenplay.cues[4].cue_type == "narration"
     assert "convenience store" in screenplay.state_update.current_bgm_track.lower()
 
 def test_cast_bible_manager(tmp_path):
@@ -33,18 +37,26 @@ def test_cast_bible_manager(tmp_path):
     db_mgr = DatabaseManager(db_path)
     db_mgr.initialize_schema()
 
-    cast_mgr = CastBibleManager(db_mgr)
+    cast_mgr = CastBibleManager(db_mgr, engine_type="edge")
     narrator = cast_mgr.resolve_character("narrator")
     assert narrator.id == "narrator"
-    assert narrator.voice_name == "pl_PL-darkman-medium"
+    assert narrator.voice_name == "pl-PL-ZofiaNeural"
+    assert narrator.gender == "female"
 
     keiko = cast_mgr.resolve_character("keiko")
     assert keiko.gender == "female"
-    assert keiko.voice_name == "pl_PL-gosia-medium"
+    assert keiko.voice_name == "pl-PL-ZofiaNeural"
 
     shiraha = cast_mgr.resolve_character("shiraha")
     assert shiraha.gender == "male"
-    assert shiraha.voice_name == "pl_PL-darkman-medium"
+    assert shiraha.voice_name == "pl-PL-MarekNeural"
+
+    # Tryb offline Piper
+    cast_mgr_piper = CastBibleManager(db_mgr, engine_type="piper")
+    cast_mgr_piper._ensure_narrator()
+    narrator_p = cast_mgr_piper.resolve_character("narrator")
+    assert narrator_p.voice_name == "pl_PL-gosia-medium"
+    assert narrator_p.gender == "female"
 
 def test_cli_status(tmp_path):
     runner = CliRunner()

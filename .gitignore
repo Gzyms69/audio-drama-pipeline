@@ -12,4 +12,5 @@ grammar/*.gbnf
 data/
 *.onnx
 *.onnx.json
+scratch/
 

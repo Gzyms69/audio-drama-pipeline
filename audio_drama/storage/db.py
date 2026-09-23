@@ -270,3 +270,9 @@ class DatabaseManager:
                     )
                 )
             return cues
+
+    def clear_cues_for_scene(self, scene_id: str) -> None:
+        """Usuwa wszystkie kwestie dla danej sceny (np. przy ponownej reżyserii)."""
+        with self.get_connection() as conn:
+            conn.execute("DELETE FROM audio_cues WHERE scene_id = ?", (scene_id,))
+            conn.commit()

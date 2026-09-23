@@ -30,14 +30,14 @@ class SceneMixer:
         voice_signal: np.ndarray,
         bgm_signal: np.ndarray,
         sample_rate: int = 44100,
-        threshold_db: float = -28.0,
-        ducking_db: float = -14.0,
-        attack_ms: float = 15.0,
-        release_ms: float = 350.0
+        threshold_db: float = -26.0,
+        ducking_db: float = -7.0,
+        attack_ms: float = 30.0,
+        release_ms: float = 450.0
     ) -> np.ndarray:
         """
         Płynny kompresor sidechain oparty na detektorze obwiedni AR (Attack/Release).
-        Gdy głos przekracza próg głośności, sygnał tła BGM jest płynnie tłumiony o ducking_db.
+        Gdy głos przekracza próg głośności, sygnał tła BGM jest subtelnie tłumiony o ducking_db (-7 dB).
         """
         # Obliczenie mono obwiedni głosu
         if voice_signal.ndim > 1:
