@@ -21,6 +21,7 @@ from audio_drama.director.heuristic import parse_scene_heuristically
 from audio_drama.director.casting import CastBibleManager
 from audio_drama.tts.piper_engine import PiperEngine, PIPER_VOICE_CATALOG
 from audio_drama.tts.edge_engine import EdgeTTSEngine, EDGE_VOICE_CATALOG
+from audio_drama.tts.xtts_engine import XTTSEngine
 from audio_drama.tts.benchmark import TTSBenchmark
 from audio_drama.sfx.stable_audio import StableAudioEngine
 from audio_drama.sfx.library import FoleyLibrary
@@ -250,7 +251,7 @@ def monitor_cmd(db: str):
 @click.option("--chapter", type=int, default=None, help="Przetwórz tylko wskazany numer rozdziału.")
 @click.option("--scenes", default=None, help="Zakres scen do przetworzenia, np. s_ch01_001..s_ch01_005.")
 @click.option("--director", "director_type", type=click.Choice(["ollama", "llama", "heuristic"]), default="ollama", help="Silnik reżysera.")
-@click.option("--tts", "tts_type", type=click.Choice(["edge", "piper"]), default="edge", help="Silnik syntezy mowy TTS (edge = naturalne głosy studyjne, piper = offline ONNX).")
+@click.option("--tts", "tts_type", type=click.Choice(["xtts", "edge", "piper"]), default="xtts", help="Silnik syntezy mowy TTS (xtts = HuggingFace klonowanie głosu, edge = naturalne głosy studyjne, piper = offline ONNX).")
 @click.option("--force", is_flag=True, default=False, help="Wymuś ponowną reżyserię i syntezę scen.")
 @click.option("--tmux", is_flag=True, default=False, help="Uruchom proces w tle w trwałej sesji tmux.")
 def run_pipeline(epub_file: str, db: str, chapter: Optional[int], scenes: Optional[str], director_type: str, tts_type: str, force: bool, tmux: bool):
@@ -326,7 +327,9 @@ def run_pipeline(epub_file: str, db: str, chapter: Optional[int], scenes: Option
 
     # Inicjalizacja silników
     cast_mgr = CastBibleManager(db_mgr, engine_type=tts_type)
-    if tts_type == "edge":
+    if tts_type == "xtts":
+        tts_engine = XTTSEngine()
+    elif tts_type == "edge":
         tts_engine = EdgeTTSEngine()
     else:
         tts_engine = PiperEngine()
@@ -509,8 +512,27 @@ def run_pipeline(epub_file: str, db: str, chapter: Optional[int], scenes: Option
 
     click.echo(f"\nUkończono przetwarzanie! Zmiksowane sceny znajdują się w: {output_scenes_dir.resolve()}")
 
+@cli.command("gui")
+@click.option("--port", default=7860, help="Port serwera Web GUI (Gradio).")
+@click.option("--share", is_flag=True, default=False, help="Utwórz publiczny link Gradio Share.")
+def gui_cmd(port: int, share: bool):
+    """Uruchamia nowoczesny graficzny interfejs Web GUI (Gradio) w przeglądarce."""
+    from audio_drama.ui.app import launch_gui
+    click.echo(f"Uruchamianie Audio Drama Studio GUI na http://localhost:{port}...")
+    launch_gui(port=port, share=share)
+
+@cli.command("ui")
+@click.option("--port", default=7860, help="Port serwera Web GUI (Gradio).")
+@click.option("--share", is_flag=True, default=False, help="Utwórz publiczny link Gradio Share.")
+def ui_cmd(port: int, share: bool):
+    """Alias dla komendy gui."""
+    from audio_drama.ui.app import launch_gui
+    click.echo(f"Uruchamianie Audio Drama Studio GUI na http://localhost:{port}...")
+    launch_gui(port=port, share=share)
+
 def main():
     cli()
 
 if __name__ == "__main__":
     main()
+

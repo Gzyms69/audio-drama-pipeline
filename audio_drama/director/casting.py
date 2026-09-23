@@ -10,9 +10,13 @@ class CastBibleManager:
         self.engine_type = engine_type
         self._ensure_narrator()
 
-    def _get_engine_voices(self, gender: str) -> str:
+    def _get_engine_voices(self, gender: str, role: str = "dialogue") -> str:
         """Zwraca identyfikator modelu w zależności od aktywnego silnika TTS."""
-        if self.engine_type == "edge":
+        if self.engine_type == "xtts":
+            if role == "narrator":
+                return "Ana Florence"
+            return "Claribel Dervla" if gender == "female" else "Damian Black"
+        elif self.engine_type == "edge":
             return "pl-PL-ZofiaNeural" if gender == "female" else "pl-PL-MarekNeural"
         else: # piper
             return "pl_PL-gosia-medium" if gender == "female" else "pl_PL-darkman-medium"
@@ -20,8 +24,8 @@ class CastBibleManager:
     def _ensure_narrator(self) -> None:
         """Dla 'Dziewczyny z konbini' narrator jest postacią pierwszoosobową: 36-letnią Keiko."""
         existing = self.db.get_character("narrator")
-        expected_voice = self._get_engine_voices("female")
-        if not existing or existing.voice_name != expected_voice or existing.gender != "female":
+        expected_voice = self._get_engine_voices("female", role="narrator")
+        if not existing or existing.voice_name != expected_voice or existing.gender != "female" or existing.voice_type != self.engine_type:
             self.db.upsert_character(
                 Character(
                     id="narrator",
@@ -69,7 +73,8 @@ class CastBibleManager:
             pitch = 0.0
             desc = f"Obsadzona postać: {name}"
 
-        voice_name = expected_voice_female if gender == "female" else expected_voice_male
+        role = "narrator" if lower_id == "narrator" else "dialogue"
+        voice_name = self._get_engine_voices(gender, role=role)
 
         char = Character(
             id=char_id,
