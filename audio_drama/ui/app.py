@@ -79,7 +79,14 @@ def run_pipeline_action(
     # 1. Ustalenie pliku EPUB
     actual_epub = None
     if uploaded_file is not None:
-        actual_epub = uploaded_file.name if hasattr(uploaded_file, "name") else str(uploaded_file)
+        if isinstance(uploaded_file, str):
+            actual_epub = uploaded_file
+        elif hasattr(uploaded_file, "name"):
+            actual_epub = uploaded_file.name
+        elif isinstance(uploaded_file, dict) and "name" in uploaded_file:
+            actual_epub = uploaded_file["name"]
+        else:
+            actual_epub = str(uploaded_file)
     elif epub_path and os.path.exists(epub_path):
         actual_epub = epub_path
     elif os.path.exists(DEFAULT_EPUB):
@@ -96,169 +103,183 @@ def run_pipeline_action(
     log(f"Wybrany reżyser: {director_type.upper()}")
     log(f"Pauza międzyzdaniowa: {sentence_pause_ms} ms, Tło BGM: {bgm_gain_dbfs} dBFS")
 
-    progress(0.1, desc="Inicjalizacja bazy i ekstrakcja EPUB...")
-    db_mgr = DatabaseManager("project.db")
-    db_mgr.initialize_schema()
+    try:
+        progress(0.1, desc="Inicjalizacja bazy i ekstrakcja EPUB...")
+        db_mgr = DatabaseManager("project.db")
+        db_mgr.initialize_schema()
 
-    # Ekstrakcja jeśli baza pusta
-    existing_scenes = db_mgr.list_scenes()
-    if not existing_scenes:
-        extractor = EpubExtractor(actual_epub)
-        meta = extractor.get_metadata()
-        db_mgr.set_meta("title", meta.get("title", "Audio Drama"))
-        db_mgr.set_meta("author", meta.get("author", "Autor"))
-        chapters = extractor.extract_chapters()
-        for chap in chapters:
-            chunks = EpubExtractor.chunk_text(chap["content"], max_tokens=1500, overlap_tokens=200)
-            for s_idx, chunk in enumerate(chunks, 1):
-                s_id = f"s_ch{chap['chapter_idx']:02d}_{s_idx:03d}"
-                db_mgr.upsert_scene(Scene(
-                    scene_id=s_id,
-                    chapter_idx=chap["chapter_idx"],
-                    scene_idx=s_idx,
-                    raw_text=chunk,
-                    status="pending"
-                ))
-        all_scenes = db_mgr.list_scenes()
-    else:
-        all_scenes = existing_scenes
-
-    # Dobór sceny docelowej
-    scene_filter = target_scene.strip() if target_scene else "s_ch02_001"
-    target_scenes = [s for s in all_scenes if s.scene_id == scene_filter]
-    if not target_scenes:
-        target_scenes = [all_scenes[0]] if all_scenes else []
-
-    if not target_scenes:
-        return None, "❌ Brak scen do przetworzenia w bazie.", "\n".join(logs)
-
-    # Inicjalizacja silników
-    progress(0.2, desc="Ładowanie modeli i obsady...")
-    cast_mgr = CastBibleManager(db_mgr, engine_type=tts_type)
-
-    if tts_type == "xtts":
-        log("Ładowanie modelu HuggingFace Coqui XTTS-v2...")
-        tts_engine = XTTSEngine()
-    elif tts_type == "edge":
-        log("Ładowanie silnika Edge-TTS...")
-        tts_engine = EdgeTTSEngine()
-    else:
-        log("Ładowanie silnika Piper TTS...")
-        tts_engine = PiperEngine()
-
-    foley_lib = FoleyLibrary()
-    foley_matcher = FoleyMatcher(foley_lib)
-    sfx_engine = StableAudioEngine()
-    mixer = SceneMixer(sample_rate=44100)
-
-    out_scenes_dir = Path("output/scenes")
-    stems_v_dir = Path("stems/voices")
-    stems_a_dir = Path("stems/ambient")
-    out_scenes_dir.mkdir(parents=True, exist_ok=True)
-    stems_v_dir.mkdir(parents=True, exist_ok=True)
-    stems_a_dir.mkdir(parents=True, exist_ok=True)
-
-    generated_master_path = None
-
-    for s_i, scene in enumerate(target_scenes):
-        if force_regen:
-            db_mgr.clear_cues_for_scene(scene.scene_id)
-            scene.status = "pending"
-            db_mgr.upsert_scene(scene)
-
-        # Faza 1: Reżyseria
-        progress(0.3, desc=f"Reżyseria sceny {scene.scene_id}...")
-        log(f"Scena {scene.scene_id}: Analiza scenariusza...")
-        cues = db_mgr.get_cues_for_scene(scene.scene_id)
-        if not cues:
-            script_data = parse_scene_heuristically(scene.raw_text, scene.scene_id, cast_mgr)
-            scene.bgm_prompt = script_data.bgm_prompt
-            db_mgr.upsert_scene(scene)
-            for cue in script_data.cues:
-                db_mgr.insert_cue(cue)
-            cues = db_mgr.get_cues_for_scene(scene.scene_id)
-
-        # Faza 2: Synteza TTS
-        log(f"Scena {scene.scene_id}: Synteza {len(cues)} kwestii ({tts_type.upper()})...")
-        cues_audio = []
-        for c_idx, cue in enumerate(cues):
-            pct = 0.3 + (c_idx / max(len(cues), 1)) * 0.4
-            progress(pct, desc=f"Synteza kwestii {c_idx+1}/{len(cues)}...")
-
-            wav_name = f"{scene.scene_id}_{cue.cue_order:03d}_{cue.speaker_id}.wav"
-            wav_path = stems_v_dir / wav_name
-
-            char = cast_mgr.resolve_character(cue.speaker_id)
-            speed = getattr(cue, "speed", 1.0) or 1.0
-            if cue.cue_type == "narration":
-                speed = 0.94
-
-            if not wav_path.exists() or force_regen:
-                tts_engine.synthesize(
-                    text=cue.text_content,
-                    output_path=wav_path,
-                    voice=char.voice_name,
-                    speed=speed,
-                    target_sample_rate=44100
-                )
-                cue.voice_wav_path = str(wav_path)
-                db_mgr.insert_cue(cue)
-
-            audio_data, sr = sf.read(str(wav_path))
-            if audio_data.ndim > 1:
-                audio_data = np.mean(audio_data, axis=1)
-
-            cue.duration_ms = round((len(audio_data) / max(sr, 1)) * 1000.0, 1)
-            db_mgr.insert_cue(cue)
-
-            pause = getattr(cue, "pause_after_ms", None)
-            if pause is None:
-                pause = sentence_pause_ms if cue.cue_type == "narration" else 220
-
-            cues_audio.append({
-                "audio": audio_data,
-                "sample_rate": sr,
-                "pause_after_ms": pause
-            })
-
-        # Montaż głosu
-        progress(0.75, desc="Montaż ścieżki wokalnej...")
-        voice_track, voice_dur_s = mixer.assemble_voice_track(cues_audio)
-
-        # Faza 3: Tło dźwiękowe
-        progress(0.85, desc="Generacja i miks tła audio...")
-        bgm_file = stems_a_dir / f"{scene.scene_id}_bgm.wav"
-        if "konbini" in (scene.bgm_prompt or "").lower() or "sklep" in (scene.raw_text or "").lower():
-            bgm_audio = foley_lib.generate_store_ambience(duration_s=max(voice_dur_s, 5.0))
-            sf.write(str(bgm_file), bgm_audio, 44100)
+        # Ekstrakcja jeśli baza pusta
+        existing_scenes = db_mgr.list_scenes()
+        if not existing_scenes:
+            extractor = EpubExtractor(actual_epub)
+            meta = extractor.get_metadata()
+            db_mgr.set_meta("title", meta.get("title", "Audio Drama"))
+            db_mgr.set_meta("author", meta.get("author", "Autor"))
+            chapters = extractor.extract_chapters()
+            for chap in chapters:
+                chunks = EpubExtractor.chunk_text(chap["content"], max_tokens=1500, overlap_tokens=200)
+                for s_idx, chunk in enumerate(chunks, 1):
+                    s_id = f"s_ch{chap['chapter_idx']:02d}_{s_idx:03d}"
+                    db_mgr.upsert_scene(Scene(
+                        scene_id=s_id,
+                        chapter_idx=chap["chapter_idx"],
+                        scene_idx=s_idx,
+                        raw_text=chunk,
+                        status="pending"
+                    ))
+            all_scenes = db_mgr.list_scenes()
         else:
-            sfx_engine.generate_ambient(
-                prompt=scene.bgm_prompt or "quiet convenience store room tone",
-                duration_seconds=max(voice_dur_s, 5.0),
-                output_path=bgm_file,
-                sample_rate=44100
+            all_scenes = existing_scenes
+
+        # Dobór sceny docelowej
+        scene_filter = target_scene.strip() if target_scene else "s_ch02_001"
+        target_scenes = [s for s in all_scenes if s.scene_id == scene_filter]
+        if not target_scenes:
+            target_scenes = [all_scenes[0]] if all_scenes else []
+
+        if not target_scenes:
+            return None, "❌ Brak scen do przetworzenia w bazie.", "\n".join(logs)
+
+        # Inicjalizacja silników
+        progress(0.2, desc="Ładowanie modeli i obsady...")
+        cast_mgr = CastBibleManager(db_mgr, engine_type=tts_type)
+
+        if tts_type == "xtts":
+            log("Ładowanie modelu HuggingFace Coqui XTTS-v2...")
+            tts_engine = XTTSEngine()
+        elif tts_type == "edge":
+            log("Ładowanie silnika Edge-TTS...")
+            tts_engine = EdgeTTSEngine()
+        else:
+            log("Ładowanie silnika Piper TTS...")
+            tts_engine = PiperEngine()
+
+        foley_lib = FoleyLibrary()
+        foley_matcher = FoleyMatcher(foley_lib)
+        sfx_engine = StableAudioEngine()
+        mixer = SceneMixer(sample_rate=44100)
+
+        out_scenes_dir = Path("output/scenes")
+        stems_v_dir = Path("stems/voices")
+        stems_a_dir = Path("stems/ambient")
+        out_scenes_dir.mkdir(parents=True, exist_ok=True)
+        stems_v_dir.mkdir(parents=True, exist_ok=True)
+        stems_a_dir.mkdir(parents=True, exist_ok=True)
+
+        generated_master_path = None
+
+        for s_i, scene in enumerate(target_scenes):
+            if force_regen:
+                db_mgr.clear_cues_for_scene(scene.scene_id)
+                scene.status = "pending"
+                db_mgr.upsert_scene(scene)
+
+            # Faza 1: Reżyseria
+            progress(0.3, desc=f"Reżyseria sceny {scene.scene_id}...")
+            log(f"Scena {scene.scene_id}: Analiza scenariusza...")
+            cues = db_mgr.get_cues_for_scene(scene.scene_id)
+            if not cues:
+                script_data = parse_scene_heuristically(scene)
+                scene.bgm_prompt = script_data.state_update.current_bgm_track
+                db_mgr.upsert_scene(scene)
+                for cue in script_data.cues:
+                    cue.scene_id = scene.scene_id
+                    db_mgr.insert_cue(cue)
+                    cast_mgr.resolve_character(cue.speaker_id)
+                cues = db_mgr.get_cues_for_scene(scene.scene_id)
+
+            # Faza 2: Synteza TTS
+            log(f"Scena {scene.scene_id}: Synteza {len(cues)} kwestii ({tts_type.upper()})...")
+            cues_audio = []
+            for c_idx, cue in enumerate(cues):
+                pct = 0.3 + (c_idx / max(len(cues), 1)) * 0.45
+                progress(pct, desc=f"Synteza kwestii {c_idx+1}/{len(cues)}...")
+
+                wav_name = f"{scene.scene_id}_{cue.cue_order:03d}_{cue.speaker_id}.wav"
+                wav_path = stems_v_dir / wav_name
+
+                char = cast_mgr.resolve_character(cue.speaker_id)
+                speed = getattr(char, "speed_factor", 1.0) * getattr(cue.delivery, "speed", 1.0)
+                if cue.cue_type == "narration":
+                    speed = 0.94
+                pitch = getattr(char, "pitch_offset", 0.0) * 50.0 + (getattr(cue.delivery, "pitch_shift", 0.0) * 50.0)
+
+                cue_text = getattr(cue, "text", None) or getattr(cue, "text_content", "")
+
+                if not wav_path.exists() or force_regen:
+                    tts_engine.synthesize(
+                        text=cue_text,
+                        output_path=wav_path,
+                        voice=char.voice_name,
+                        speed=speed,
+                        pitch=pitch,
+                        target_sample_rate=44100
+                    )
+                    cue.voice_wav_path = str(wav_path)
+                    db_mgr.insert_cue(cue)
+
+                audio_data, sr = sf.read(str(wav_path))
+                if audio_data.ndim > 1:
+                    audio_data = np.mean(audio_data, axis=1)
+
+                cue.duration_ms = round((len(audio_data) / max(sr, 1)) * 1000.0, 1)
+                db_mgr.insert_cue(cue)
+
+                pause = getattr(cue, "pause_after_ms", None)
+                if pause is None:
+                    pause = sentence_pause_ms if cue.cue_type == "narration" else 220
+
+                cues_audio.append({
+                    "audio": audio_data,
+                    "sample_rate": sr,
+                    "pause_after_ms": pause
+                })
+
+            # Montaż głosu
+            progress(0.78, desc="Montaż ścieżki wokalnej...")
+            voice_track, voice_dur_s = mixer.assemble_voice_track(cues_audio)
+
+            # Faza 3: Tło dźwiękowe
+            progress(0.85, desc="Generacja i miks tła audio...")
+            bgm_file = stems_a_dir / f"{scene.scene_id}_bgm.wav"
+            if "konbini" in (scene.bgm_prompt or "").lower() or "sklep" in (scene.raw_text or "").lower():
+                bgm_audio = foley_lib.generate_store_ambience(duration_s=max(voice_dur_s, 5.0))
+                sf.write(str(bgm_file), bgm_audio, 44100)
+            else:
+                sfx_engine.generate_ambient(
+                    prompt=scene.bgm_prompt or "quiet convenience store room tone",
+                    duration_seconds=max(voice_dur_s, 5.0),
+                    output_path=bgm_file,
+                    volume=0.35
+                )
+                bgm_audio, _ = sf.read(str(bgm_file))
+                if bgm_audio.ndim > 1:
+                    bgm_audio = np.mean(bgm_audio, axis=1)
+
+            # Faza 4: Efekty Foley i Mastering
+            progress(0.92, desc="Mastering DSP i miksowanie...")
+            sfx_events = foley_matcher.match_scene_sfx(cues, cues_audio)
+            out_scene_file = out_scenes_dir / f"{scene.scene_id}.wav"
+            mixer.mix_and_master_scene(
+                voice_track=voice_track,
+                sfx_events=sfx_events,
+                bgm_track=bgm_audio,
+                output_path=out_scene_file
             )
+            scene.status = "mixed"
+            db_mgr.upsert_scene(scene)
 
-        # Faza 4: Efekty Foley i Mastering
-        progress(0.92, desc="Mastering DSP i miksowanie...")
-        foley_events = foley_matcher.match_events(cues, cues_audio)
-        out_scene_file = out_scenes_dir / f"{scene.scene_id}.wav"
-        mixer.mix_scene(
-            scene_id=scene.scene_id,
-            cues_audio=cues_audio,
-            bgm_path=bgm_file,
-            foley_events=foley_events,
-            output_path=out_scene_file
-        )
-        scene.status = "mixed"
-        db_mgr.upsert_scene(scene)
+            generated_master_path = str(out_scene_file.resolve())
+            log(f"Scena {scene.scene_id} pomyślnie wygenerowana: {out_scene_file.name} ({voice_dur_s:.1f}s)")
 
-        generated_master_path = str(out_scene_file.resolve())
-        log(f"Scena {scene.scene_id} pomyślnie wygenerowana: {out_scene_file.name} ({voice_dur_s:.1f}s)")
-
-    progress(1.0, desc="Zakończono pomyślnie!")
-    status_summary = f"✅ Sukces: Wygenerowano słuchowisko dla sceny {target_scenes[0].scene_id}!"
-    return generated_master_path, status_summary, "\n".join(logs)
+        progress(1.0, desc="Zakończono pomyślnie!")
+        status_summary = f"✅ Sukces: Wygenerowano słuchowisko dla sceny {target_scenes[0].scene_id}!"
+        return generated_master_path, status_summary, "\n".join(logs)
+    except Exception as e:
+        import traceback
+        err_trace = traceback.format_exc()
+        log(f"\n❌ KRYTYCZNY BŁĄD WYKONANIA: {e}\n{err_trace}")
+        return None, f"❌ Wystąpił błąd: {e}", "\n".join(logs)
 
 
 def load_stem_files(scene_name: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], str]:
