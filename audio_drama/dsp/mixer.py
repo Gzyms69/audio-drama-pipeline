@@ -2,7 +2,7 @@ import numpy as np
 from typing import List, Dict, Any, Tuple, Optional
 from pathlib import Path
 import soundfile as sf
-from pedalboard import Pedalboard, Limiter, HighpassFilter, Gain
+from pedalboard import Pedalboard, Limiter, HighpassFilter, PeakFilter, HighShelfFilter, Compressor, Gain
 
 def resample_audio(audio: np.ndarray, src_sr: int, dst_sr: int) -> np.ndarray:
     """
@@ -30,14 +30,14 @@ class SceneMixer:
         voice_signal: np.ndarray,
         bgm_signal: np.ndarray,
         sample_rate: int = 44100,
-        threshold_db: float = -26.0,
-        ducking_db: float = -7.0,
-        attack_ms: float = 30.0,
-        release_ms: float = 450.0
+        threshold_db: float = -28.0,
+        ducking_db: float = -12.0,
+        attack_ms: float = 25.0,
+        release_ms: float = 500.0
     ) -> np.ndarray:
         """
         Płynny kompresor sidechain oparty na detektorze obwiedni AR (Attack/Release).
-        Gdy głos przekracza próg głośności, sygnał tła BGM jest subtelnie tłumiony o ducking_db (-7 dB).
+        Gdy głos przekracza próg głośności, sygnał tła BGM jest tłumiony o ducking_db (-12 dB).
         """
         # Obliczenie mono obwiedni głosu
         if voice_signal.ndim > 1:
@@ -167,9 +167,13 @@ class SceneMixer:
         master_right = voice_track + sfx_track + bgm_processed
         master_stereo = np.stack([master_left, master_right], axis=0)
 
-        # Mastering chain: Highpass 30Hz + PeakLimiter -1.0 dB
+        # Studyjny tor masteringowy: Warmth EQ + De-harsh + Vocal Compressor + True Peak Limiter
         board = Pedalboard([
-            HighpassFilter(cutoff_frequency_hz=30.0),
+            HighpassFilter(cutoff_frequency_hz=75.0),
+            PeakFilter(cutoff_frequency_hz=220.0, gain_db=2.0, q=1.0),
+            PeakFilter(cutoff_frequency_hz=3300.0, gain_db=-2.5, q=1.5),
+            HighShelfFilter(cutoff_frequency_hz=9000.0, gain_db=-1.5),
+            Compressor(threshold_db=-16.0, ratio=2.2, attack_ms=20.0, release_ms=150.0),
             Limiter(threshold_db=-1.0)
         ])
         master_final = board(master_stereo, self.sample_rate)

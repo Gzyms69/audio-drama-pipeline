@@ -31,7 +31,7 @@ class CastBibleManager:
                     voice_name=expected_voice,
                     gender="female",
                     description="Główny głos narracyjny Keiko Furukury, spokojny i introspektywny",
-                    speed_factor=1.0,
+                    speed_factor=0.94,
                     pitch_offset=0.0
                 )
             )
@@ -44,7 +44,7 @@ class CastBibleManager:
         # Słownik postaci ze specyfikacji 'Dziewczyna z konbini'
         # Format: (gender, name, speed_factor, pitch_offset, description)
         known: Dict[str, Tuple[str, str, float, float, str]] = {
-            "narrator": ("female", "Keiko (Narratorka)", 1.0, 0.0, "Narracja 1. osoby Keiko"),
+            "narrator": ("female", "Keiko (Narratorka)", 0.94, 0.0, "Narracja 1. osoby Keiko"),
             "keiko": ("female", "Keiko Furukura", 1.05, 0.1, "Keiko przy kasie sklepu konbini"),
             "furukura": ("female", "Keiko Furukura", 1.05, 0.1, "Keiko Furukura"),
             "klient": ("male", "Klient w sklepie", 1.0, -0.05, "Męski klient konbini"),

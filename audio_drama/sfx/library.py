@@ -224,31 +224,27 @@ class FoleyLibrary:
 
     def generate_store_ambience(self, duration_s: float = 15.0) -> np.ndarray:
         """
-        Słyszalny, gęsty miks atmosferyczny wnętrza sklepu:
-        Cichy szum kompresora lodówek z napojami (50/100/240 Hz),
-        klimatyzator sklepów Smile Mart oraz subtelny szmer tła (-20 dBFS).
+        Dyskretne, miękkie tło akustyczne wnętrza sklepu (-33 dBFS):
+        Delikatny szum cyrkulacji powietrza i klimatyzacji konbini.
+        Całkowicie wolne od natrętnego buczenia sieciowego 50/100 Hz.
         """
         sr = self.sample_rate
         n_samples = int(duration_s * sr)
-        t = np.linspace(0, duration_s, n_samples, endpoint=False)
 
-        # 1. Harmoniczny dron chłodziarek (50 Hz zasilanie, 100 Hz podwojenie, 240 Hz kompresor)
-        fridge_drone = (
-            0.18 * np.sin(2 * np.pi * 50.0 * t) +
-            0.10 * np.sin(2 * np.pi * 100.0 * t) +
-            0.05 * np.sin(2 * np.pi * 240.0 * t)
-        ).astype(np.float32)
-
-        # 2. Szum przepływu powietrza klimatyzacji (różowy szum filtrowany 150-1800 Hz)
+        # 1. Miękki, rozproszony szum powietrza (filtr pasmowoprzepustowy 180 Hz - 950 Hz)
+        np.random.seed(101)
         white = np.random.normal(0, 1, n_samples).astype(np.float32)
-        sos_air = scipy.signal.butter(3, [120, 1600], btype="bandpass", fs=sr, output="sos")
-        air_hum = scipy.signal.sosfilt(sos_air, white) * 0.25
+        sos_air = scipy.signal.butter(3, [180, 950], btype="bandpass", fs=sr, output="sos")
+        air_tone = scipy.signal.sosfilt(sos_air, white).astype(np.float32)
 
-        # 3. Subtelny brzęk transformatora świetlówek jarzeniowych (120 Hz i 1200 Hz na poziomie -30 dB)
-        light_hum = (0.02 * np.sin(2 * np.pi * 120 * t) + 0.008 * np.sin(2 * np.pi * 1200 * t)).astype(np.float32)
+        # 2. Bardzo subtelna, rozmyta składowa kompresora (szum filtrowany 120-280 Hz z powolną modulacją)
+        t = np.linspace(0, duration_s, n_samples, endpoint=False)
+        lfo = 0.8 + 0.2 * np.sin(2 * np.pi * 0.15 * t).astype(np.float32)
+        sos_low = scipy.signal.butter(2, [120, 280], btype="bandpass", fs=sr, output="sos")
+        gentle_low = (scipy.signal.sosfilt(sos_low, white) * lfo * 0.25).astype(np.float32)
 
-        miks = fridge_drone * 0.4 + air_hum * 0.5 + light_hum
-        # Normalizacja do odczuwalnego poziomu tła (-20 dBFS)
+        miks = air_tone * 0.7 + gentle_low * 0.3
         peak = np.max(np.abs(miks)) + 1e-6
-        target_gain = 0.20 # stały, wyraźny, ale niezagłuszający poziom
+        # Dyskretny poziom tła (-33 dBFS) – subtelna przestrzeń, niezagłuszająca lektora
+        target_gain = 0.022
         return (miks / peak * target_gain).astype(np.float32)

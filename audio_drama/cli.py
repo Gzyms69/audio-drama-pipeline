@@ -437,7 +437,7 @@ def run_pipeline(epub_file: str, db: str, chapter: Optional[int], scenes: Option
                 cue.duration_ms = round((len(audio_data) / max(sr, 1)) * 1000.0, 1)
                 db_mgr.insert_cue(cue)
 
-                pause_after = 180 if cue.cue_type == "dialogue" else 350
+                pause_after = cue.pause_after_ms if getattr(cue, "pause_after_ms", None) is not None else (220 if cue.cue_type == "dialogue" else 420)
                 cues_audio.append({
                     "audio": audio_data,
                     "sample_rate": sr,

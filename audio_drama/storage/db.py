@@ -78,6 +78,12 @@ class DatabaseManager:
                 cursor.execute("ALTER TABLE characters ADD COLUMN gender TEXT DEFAULT 'unknown'")
             if "description" not in cols:
                 cursor.execute("ALTER TABLE characters ADD COLUMN description TEXT")
+
+            # Bezpieczne migracje kolumn w audio_cues
+            cursor.execute("PRAGMA table_info(audio_cues)")
+            cues_cols = [c[1] for c in cursor.fetchall()]
+            if "pause_after_ms" not in cues_cols:
+                cursor.execute("ALTER TABLE audio_cues ADD COLUMN pause_after_ms INTEGER DEFAULT 350")
             conn.commit()
 
     def set_meta(self, key: str, value: str) -> None:
@@ -208,8 +214,8 @@ class DatabaseManager:
                 INSERT INTO audio_cues (
                     cue_id, scene_id, cue_order, cue_type, speaker_id,
                     text_content, emotion, speed, pitch_shift, sfx_json,
-                    voice_wav_path, duration_ms, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    voice_wav_path, duration_ms, pause_after_ms, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(cue_id) DO UPDATE SET
                     scene_id = excluded.scene_id,
                     cue_order = excluded.cue_order,
@@ -222,6 +228,7 @@ class DatabaseManager:
                     sfx_json = excluded.sfx_json,
                     voice_wav_path = excluded.voice_wav_path,
                     duration_ms = excluded.duration_ms,
+                    pause_after_ms = excluded.pause_after_ms,
                     status = excluded.status
             """, (
                 cue.cue_id,
@@ -236,6 +243,7 @@ class DatabaseManager:
                 json.dumps(sfx_dicts, ensure_ascii=False),
                 cue.voice_wav_path,
                 cue.duration_ms,
+                cue.pause_after_ms,
                 cue.status
             ))
             conn.commit()
@@ -266,6 +274,7 @@ class DatabaseManager:
                         sfx=sfx_list,
                         voice_wav_path=row["voice_wav_path"],
                         duration_ms=row["duration_ms"],
+                        pause_after_ms=row["pause_after_ms"] if "pause_after_ms" in row.keys() and row["pause_after_ms"] is not None else 350,
                         status=row["status"]
                     )
                 )

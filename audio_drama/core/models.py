@@ -38,6 +38,7 @@ class AudioCue(BaseModel):
     sfx: List[SfxEvent] = Field(default_factory=list)
     voice_wav_path: Optional[str] = None
     duration_ms: Optional[float] = None
+    pause_after_ms: int = Field(default=350, description="Długość naturalnej pauzy po kwestii w milisekundach")
     status: str = "pending"
 
 class StateUpdate(BaseModel):
